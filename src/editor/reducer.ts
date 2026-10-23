@@ -27,6 +27,8 @@ export type EditorAction =
   | { type: 'setValue'; id: string; field: ValueField; value: number }
   | { type: 'toggleSwitch'; id: string }
   | { type: 'load'; circuit: Circuit }
+  /** 以此電路開始一段新的歷史（例如開啟分享連結） */
+  | { type: 'reset'; circuit: Circuit }
   | { type: 'select'; id: string | null }
   | { type: 'undo' }
   | { type: 'redo' };
@@ -124,6 +126,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       );
     case 'load':
       return commit(state, action.circuit, null);
+    case 'reset':
+      return initialEditorState(action.circuit);
     case 'select':
       return action.id === state.selectedId ? state : { ...state, selectedId: action.id };
     case 'undo': {

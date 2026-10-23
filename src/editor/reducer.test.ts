@@ -163,4 +163,11 @@ describe('Undo／Redo', () => {
     state = apply(state, { type: 'undo' });
     expect(state.circuit).toEqual(empty);
   });
+
+  it('reset 以新電路開始一段新的歷史', () => {
+    const loaded: Circuit = { version: 1, elements: [resistor] };
+    let state = apply(initialEditorState(empty), { type: 'add', element: resistor });
+    state = apply(state, { type: 'reset', circuit: loaded });
+    expect(state).toEqual(initialEditorState(loaded));
+  });
 });

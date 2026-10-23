@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { downloadBlob, svgToPngBlob } from '../io/exportPng';
+import { parseCircuit, serializeCircuit } from '../io/serialize';
+import { buildShareUrl, decodeShareFragment, readShareFragment } from '../io/shareLink';
 import { editorReducer, initialEditorState, type EditorAction } from '../editor/reducer';
 import type { Circuit } from '../model/types';
 import { diagnostic } from '../solver/diagnostics';
@@ -10,6 +13,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel';
 import type { Highlight } from './ElementView';
 import { PredictionPanel } from './PredictionPanel';
 import { PropertyPanel } from './PropertyPanel';
+import { Toast, type ToastMessage } from './Toast';
 import { Toolbar } from './Toolbar';
 import { TOOLS, type Tool } from './tools';
 
@@ -56,6 +60,73 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [showLabels, setShowLabels] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  // 開啟分享連結：以連結中的電路開始新的歷史
+  useEffect(() => {
+    const fragment = readShareFragment(window.location.hash);
+    if (!fragment) return;
+    let cancelled = false;
+    void decodeShareFragment(fragment).then((parsed) => {
+      if (cancelled) return;
+      if (parsed.ok) {
+        dispatch({ type: 'reset', circuit: parsed.circuit });
+        setNote(null);
+      } else {
+        setToast({ text: parsed.error, kind: 'error' });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!toast || toast.link) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const saveJson = () => {
+    const blob = new Blob([serializeCircuit(state.circuit)], { type: 'application/json' });
+    downloadBlob(blob, 'circuit.json');
+  };
+
+  const openJson = async (file: File) => {
+    const parsed = parseCircuit(await file.text());
+    if (parsed.ok) {
+      dispatch({ type: 'load', circuit: parsed.circuit });
+      predict({ type: 'stop' });
+      setNote(null);
+      setToast({ text: `已開啟 ${file.name}`, kind: 'info' });
+    } else {
+      setToast({ text: `無法開啟 ${file.name}：${parsed.error}`, kind: 'error' });
+    }
+  };
+
+  const share = async () => {
+    const url = await buildShareUrl(
+      state.circuit,
+      window.location.origin + window.location.pathname,
+    );
+    try {
+      await navigator.clipboard.writeText(url);
+      setToast({ text: '已複製分享連結，貼給學生就能開啟這個電路。', kind: 'info' });
+    } catch {
+      setToast({ text: '請複製下面的分享連結：', kind: 'info', link: url });
+    }
+  };
+
+  const exportPng = async () => {
+    if (!svgRef.current) return;
+    try {
+      downloadBlob(await svgToPngBlob(svgRef.current), 'circuit.png');
+    } catch (error) {
+      console.error(error);
+      setToast({ text: '匯出圖片失敗，請再試一次。', kind: 'error' });
+    }
+  };
 
   const result = useMemo(() => safeSolve(state.circuit), [state.circuit]);
   const focusIds = useMemo(() => {
@@ -172,6 +243,30 @@ export function App() {
           >
             ↷ 重做
           </button>
+          <button type="button" onClick={saveJson} title="下載電路檔（JSON）">
+            💾 存檔
+          </button>
+          <button type="button" onClick={() => fileRef.current?.click()} title="開啟電路檔（JSON）">
+            📂 開啟
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            data-testid="file-input"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) void openJson(file);
+            }}
+          />
+          <button type="button" onClick={() => void share()} title="產生分享連結">
+            🔗 分享連結
+          </button>
+          <button type="button" onClick={() => void exportPng()} title="匯出畫布為 PNG">
+            🖼 匯出 PNG
+          </button>
           <label className="toggle">
             <input
               type="checkbox"
@@ -230,6 +325,7 @@ export function App() {
           />
         </aside>
       </main>
+      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }
