@@ -6,9 +6,11 @@ export const COLORS = {
   selected: '#2563eb',
   error: '#dc2626',
   warning: '#ea580c',
+  focus: '#7c3aed',
   flow: '#f59e0b',
   bulbOff: '#f8fafc',
-  bulbOn: '#fde047',
+  bulbDim: '#fef9c3',
+  bulbOn: '#facc15',
   labelBg: '#ffffff',
   positive: '#dc2626',
 } as const;

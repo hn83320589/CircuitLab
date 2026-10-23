@@ -5,7 +5,8 @@ import type { ElementResult } from '../solver/solve';
 import { COLORS } from './colors';
 import { CELL, bulbBrightness, flowDurationSeconds } from './visual';
 
-export type Highlight = 'error' | 'warning';
+/** focus：預測模式中被選定的燈泡與開關 */
+export type Highlight = 'error' | 'warning' | 'focus';
 
 interface ElementViewProps {
   element: CircuitElement;
@@ -189,13 +190,14 @@ function CenterDecoration(props: {
     const b = result ? bulbBrightness(result.power) : 0;
     return (
       <g data-brightness={b.toFixed(3)}>
-        {b > 0 && <circle cx={x} cy={y} r={10 + 14 * b} fill={COLORS.bulbOn} opacity={0.55 * b} />}
+        {b > 0 && (
+          <circle cx={x} cy={y} r={11 + 24 * b} fill={COLORS.bulbOn} opacity={0.15 + 0.55 * b} />
+        )}
         <circle
           cx={x}
           cy={y}
           r={10}
-          fill={b > 0 ? COLORS.bulbOn : COLORS.bulbOff}
-          fillOpacity={b > 0 ? 0.35 + 0.65 * b : 1}
+          fill={b > 0 ? mixColor(COLORS.bulbDim, COLORS.bulbOn, b) : COLORS.bulbOff}
           stroke={COLORS.ink}
           strokeWidth={STROKE}
         />
@@ -232,6 +234,15 @@ function CenterDecoration(props: {
     );
   }
   return null;
+}
+
+/** 兩個 #rrggbb 色碼之間的線性插值 */
+function mixColor(from: string, to: string, t: number): string {
+  const channel = (hex: string, i: number) => parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);
+  const mixed = [0, 1, 2].map((i) =>
+    Math.round(channel(from, i) + (channel(to, i) - channel(from, i)) * t),
+  );
+  return `rgb(${mixed.join(' ')})`;
 }
 
 function MeterReading({ x, y, text }: { x: number; y: number; text: string }) {

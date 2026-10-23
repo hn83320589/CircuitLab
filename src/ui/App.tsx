@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { editorReducer, initialEditorState } from '../editor/reducer';
+import { editorReducer, initialEditorState, type EditorAction } from '../editor/reducer';
 import type { Circuit } from '../model/types';
 import { diagnostic } from '../solver/diagnostics';
 import { solve, type SolveResult } from '../solver/solve';
-import { EXAMPLES } from '../teaching/examples';
+import { EXAMPLES, type Example } from '../teaching/examples';
+import { evaluatePrediction, predictionReducer } from '../teaching/prediction';
 import { CircuitCanvas } from './CircuitCanvas';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import type { Highlight } from './ElementView';
+import { PredictionPanel } from './PredictionPanel';
 import { PropertyPanel } from './PropertyPanel';
 import { Toolbar } from './Toolbar';
 import { TOOLS, type Tool } from './tools';
@@ -29,8 +31,9 @@ function safeSolve(circuit: Circuit): SolveResult {
   }
 }
 
-function buildHighlights(result: SolveResult): Map<string, Highlight> {
+function buildHighlights(result: SolveResult, focusIds: readonly string[]): Map<string, Highlight> {
   const map = new Map<string, Highlight>();
+  for (const id of focusIds) map.set(id, 'focus');
   for (const d of result.diagnostics) {
     for (const id of d.elementIds) {
       if (map.get(id) !== 'error') map.set(id, d.severity);
@@ -44,16 +47,63 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 export function App() {
+  const firstExample = EXAMPLES[0] as Example;
   const [state, dispatch] = useReducer(editorReducer, undefined, () =>
-    initialEditorState((EXAMPLES[0] as (typeof EXAMPLES)[number]).circuit),
+    initialEditorState(firstExample.circuit),
   );
+  const [prediction, predict] = useReducer(predictionReducer, { step: 'off' });
+  const [note, setNote] = useState<Example | null>(firstExample);
   const [tool, setTool] = useState<Tool>('select');
   const [showLabels, setShowLabels] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const result = useMemo(() => safeSolve(state.circuit), [state.circuit]);
-  const highlights = useMemo(() => buildHighlights(result), [result]);
+  const focusIds = useMemo(() => {
+    if (prediction.step === 'pickSwitch') return [prediction.bulbId];
+    if (prediction.step === 'guess' || prediction.step === 'result') {
+      return [prediction.bulbId, prediction.switchId];
+    }
+    return [];
+  }, [prediction]);
+  const highlights = useMemo(() => buildHighlights(result, focusIds), [result, focusIds]);
   const selected = state.circuit.elements.find((el) => el.id === state.selectedId);
+
+  const revealPrediction = () => {
+    if (prediction.step !== 'guess' || !prediction.guess) return;
+    const { bulbId, switchId, guess } = prediction;
+    predict({
+      type: 'reveal',
+      outcome: evaluatePrediction(state.circuit, bulbId, switchId, guess),
+    });
+    dispatch({ type: 'toggleSwitch', id: switchId });
+  };
+
+  /** 預測模式中，畫布上的點擊代表「選擇燈泡／開關」或「揭曉結果」 */
+  const handleAction = (action: EditorAction) => {
+    const kindOf = (id: string) => state.circuit.elements.find((el) => el.id === id)?.kind;
+    if (prediction.step === 'pickBulb' && action.type === 'select' && action.id) {
+      if (kindOf(action.id) === 'bulb') predict({ type: 'pickBulb', id: action.id });
+    } else if (prediction.step === 'pickSwitch' && action.type === 'toggleSwitch') {
+      predict({ type: 'pickSwitch', id: action.id });
+      return;
+    } else if (
+      (prediction.step === 'guess' || prediction.step === 'result') &&
+      action.type === 'toggleSwitch' &&
+      action.id === prediction.switchId
+    ) {
+      revealPrediction();
+      return;
+    }
+    dispatch(action);
+  };
+
+  const loadExample = (id: string) => {
+    const example = EXAMPLES.find((e) => e.id === id);
+    if (!example) return;
+    dispatch({ type: 'load', circuit: example.circuit });
+    predict({ type: 'stop' });
+    setNote(example);
+  };
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -91,6 +141,21 @@ export function App() {
           CircuitLab Jr. <small>直流電路模擬教具</small>
         </h1>
         <div className="actions">
+          <select
+            aria-label="載入範例"
+            value=""
+            onChange={(e) => loadExample(e.target.value)}
+            data-testid="example-select"
+          >
+            <option value="" disabled>
+              📚 載入範例…
+            </option>
+            {EXAMPLES.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.title}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => dispatch({ type: 'undo' })}
@@ -127,11 +192,33 @@ export function App() {
             tool={tool}
             showLabels={showLabels}
             highlights={highlights}
-            dispatch={dispatch}
+            dispatch={handleAction}
             svgRef={svgRef}
           />
         </div>
         <aside className="side">
+          {note && (
+            <section className="panel note" aria-label="範例說明">
+              <h2>
+                {note.title}
+                <button
+                  type="button"
+                  className="close"
+                  onClick={() => setNote(null)}
+                  aria-label="關閉說明"
+                >
+                  ×
+                </button>
+              </h2>
+              <p>{note.description}</p>
+            </section>
+          )}
+          <PredictionPanel
+            state={prediction}
+            circuit={state.circuit}
+            onAction={predict}
+            onReveal={revealPrediction}
+          />
           <DiagnosticsPanel
             diagnostics={result.diagnostics}
             onSelect={(id) => dispatch({ type: 'select', id })}
@@ -139,7 +226,7 @@ export function App() {
           <PropertyPanel
             element={selected}
             result={selected ? result.elements.get(selected.id) : undefined}
-            dispatch={dispatch}
+            dispatch={handleAction}
           />
         </aside>
       </main>

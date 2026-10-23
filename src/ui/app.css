@@ -291,3 +291,84 @@ button.primary {
 .diagnostics .warning strong {
   color: var(--warning);
 }
+
+select {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.note h2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 8px;
+}
+
+.note p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.close {
+  border: none;
+  padding: 0 4px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.prediction {
+  border: 2px solid #7c3aed;
+}
+
+.instruction {
+  font-size: 17px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.choice {
+  font-size: 18px;
+  padding: 10px 0;
+}
+
+.choice.chosen {
+  background: #ede9fe;
+  border-color: #7c3aed;
+  color: #6d28d9;
+  font-weight: 700;
+}
+
+.verdict {
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.verdict strong {
+  font-size: 22px;
+}
+
+.verdict p {
+  margin: 6px 0 0;
+}
+
+.verdict.correct {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.verdict.wrong {
+  background: var(--error-soft);
+  color: #991b1b;
+}
