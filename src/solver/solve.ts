@@ -2,6 +2,7 @@ import type { Circuit, CircuitElement } from '../model/types';
 import { diagnostic, type Diagnostic } from './diagnostics';
 import { solveMna, type Branch } from './mna';
 import { buildNetlist, supernodesOf, type Netlist } from './netlist';
+import { analyzeSources, findDangling, type SourceGroup } from './topology';
 import { UnionFind } from './unionFind';
 import { distributeZeroOhmCurrents, type ZeroOhmEdge } from './zeroOhmFlow';
 
@@ -19,6 +20,9 @@ export interface SolveResult {
   readonly elements: ReadonlyMap<string, ElementResult | null>;
   readonly diagnostics: readonly Diagnostic[];
 }
+
+/** 低於此值的電流視為沒有電流（A） */
+const NO_CURRENT = 1e-9;
 
 interface Component {
   /** 依導電元件出現順序排列；第一個為接地點 */
@@ -63,46 +67,56 @@ function findComponents(net: Netlist): { componentOf: Int32Array; components: Co
   return { componentOf, components };
 }
 
-function toBranch(el: CircuitElement, sa: number, sb: number): Branch {
-  if (el.kind === 'battery') {
-    return { kind: 'source', sa, sb, emf: el.emf, internalR: el.internalR };
-  }
-  if (el.kind === 'resistor' || el.kind === 'bulb') {
-    return { kind: 'resistive', sa, sb, conductance: 1 / el.resistance };
-  }
-  throw new Error(`${el.kind} 不是導電元件`);
-}
-
 export function solve(circuit: Circuit): SolveResult {
   const elements = circuit.elements;
   const net = buildNetlist(elements);
   const { componentOf, components } = findComponents(net);
-  const failed = new Set<number>();
+  const sources = analyzeSources(elements, net);
+  const topologyFailed = new Set(sources.failedSupernodes.map((s) => componentOf[s] as number));
+  const failed = new Set(topologyFailed);
   const voltage = new Float64Array(net.supernodeCount);
   const current = new Float64Array(elements.length);
 
   // ① 每個連通分量各自做 MNA
   components.forEach((component, id) => {
-    if (component.conductive.length === 0) return;
-    const branches = component.conductive.map((i) => {
+    if (component.conductive.length === 0 || failed.has(id)) return;
+    const branches: Branch[] = [];
+    const groups: SourceGroup[] = [];
+    for (const i of component.conductive) {
+      const el = elements[i] as CircuitElement;
       const [sa, sb] = supernodesOf(net, i);
-      return toBranch(elements[i] as CircuitElement, sa, sb);
-    });
+      if (el.kind === 'resistor' || el.kind === 'bulb') {
+        branches.push({ kind: 'resistive', sa, sb, conductance: 1 / el.resistance });
+        continue;
+      }
+      const group = sources.groupOfElement.get(i);
+      // 並聯合併的電池組只在第一個成員處建立一條支路
+      if (!group || group.members[0]?.element !== i) continue;
+      branches.push({ kind: 'source', ...group });
+      groups.push(group);
+    }
     const solution = solveMna({ supernodes: component.supernodes, branches });
     if (!solution) {
       failed.add(id);
       return;
     }
     component.supernodes.forEach((s, k) => (voltage[s] = solution.voltages[k] as number));
-    let sourceIndex = 0;
-    component.conductive.forEach((i, k) => {
-      const branch = branches[k] as Branch;
-      current[i] =
-        branch.kind === 'resistive'
-          ? ((voltage[branch.sa] as number) - (voltage[branch.sb] as number)) * branch.conductance
-          : (solution.sourceCurrents[sourceIndex++] as number);
+    component.conductive.forEach((i) => {
+      const [sa, sb] = supernodesOf(net, i);
+      const el = elements[i] as CircuitElement;
+      if (el.kind === 'resistor' || el.kind === 'bulb') {
+        current[i] = ((voltage[sa] as number) - (voltage[sb] as number)) / el.resistance;
+      }
+    });
+    groups.forEach((group, k) => {
+      const total = solution.sourceCurrents[k] as number;
+      for (const m of group.members) current[m.element] = (m.sign * total) / group.members.length;
     });
   });
+
+  // 懸空元件在拓樸上不可能有電流，直接設為 0 以消除浮點殘差
+  const dangling = findDangling(net);
+  for (const i of dangling) current[i] = 0;
 
   // ② 超節點內部分配 0 Ω 元件的電流
   const injection = new Float64Array(net.pointCount);
@@ -166,20 +180,77 @@ export function solve(circuit: Circuit): SolveResult {
   });
 
   const results = new Map<string, ElementResult | null>();
-  const failedMembers = new Map<number, string[]>();
+  const singularMembers = new Map<number, string[]>();
   elements.forEach((el, i) => {
     const [ca, cb] = componentsOfElement(i);
     const inFailed = failed.has(ca) || failed.has(cb);
     results.set(el.id, inFailed ? null : (raw[i] as ElementResult | null));
-    if (inFailed && net.roles[i] !== 'open') {
-      const members = failedMembers.get(ca) ?? [];
-      members.push(el.id);
-      failedMembers.set(ca, members);
+    if (inFailed && !topologyFailed.has(ca) && net.roles[i] !== 'open') {
+      singularMembers.set(ca, [...(singularMembers.get(ca) ?? []), el.id]);
     }
   });
 
-  const diagnostics: Diagnostic[] = [...failedMembers.values()].map((ids) =>
-    diagnostic('SINGULAR', ids),
-  );
+  const diagnostics: Diagnostic[] = [...sources.diagnostics];
+  for (const ids of singularMembers.values()) diagnostics.push(diagnostic('SINGULAR', ids));
+
+  const danglingIds = dangling
+    .filter((i) => elements[i]?.kind !== 'voltmeter')
+    .map((i) => (elements[i] as CircuitElement).id);
+  if (danglingIds.length > 0) diagnostics.push(diagnostic('DANGLING', danglingIds));
+
+  diagnostics.push(...checkVoltmeters(elements, net, componentsOfElement, raw, current));
   return { elements: results, diagnostics };
+}
+
+/**
+ * 電壓計檢查：
+ * - 兩端不在同一個導電連通分量（含一端懸空）→ 無法量測
+ * - 串聯判定（啟發式）：讀數不為 0、沒有任何元件與它直接並聯，
+ *   且至少一端除了電壓計之外完全沒有電流 → 電流被電壓計擋住了
+ */
+function checkVoltmeters(
+  elements: readonly CircuitElement[],
+  net: Netlist,
+  componentsOfElement: (i: number) => [number, number],
+  raw: readonly (ElementResult | null)[],
+  current: Float64Array,
+): Diagnostic[] {
+  const pairKey = (sa: number, sb: number) => (sa < sb ? `${sa},${sb}` : `${sb},${sa}`);
+  const directPairs = new Set<string>();
+  const hasCurrent = new Uint8Array(net.supernodeCount);
+  elements.forEach((el, i) => {
+    if (el.kind === 'voltmeter') return;
+    const [sa, sb] = supernodesOf(net, i);
+    directPairs.add(pairKey(sa, sb));
+    const conductive = net.roles[i] === 'resistive' || net.roles[i] === 'source';
+    if (conductive && Math.abs(current[i] as number) > NO_CURRENT) {
+      hasCurrent[sa] = 1;
+      hasCurrent[sb] = 1;
+    }
+  });
+
+  const unconnected: string[] = [];
+  const inSeries: string[] = [];
+  elements.forEach((el, i) => {
+    if (el.kind !== 'voltmeter') return;
+    const [ca, cb] = componentsOfElement(i);
+    if (ca !== cb) {
+      unconnected.push(el.id);
+      return;
+    }
+    const reading = raw[i]?.voltage ?? 0;
+    const [sa, sb] = supernodesOf(net, i);
+    if (
+      Math.abs(reading) > NO_CURRENT &&
+      !directPairs.has(pairKey(sa, sb)) &&
+      (!hasCurrent[sa] || !hasCurrent[sb])
+    ) {
+      inSeries.push(el.id);
+    }
+  });
+
+  const out: Diagnostic[] = [];
+  if (unconnected.length > 0) out.push(diagnostic('VOLTMETER_UNCONNECTED', unconnected));
+  if (inSeries.length > 0) out.push(diagnostic('VOLTMETER_IN_SERIES', inSeries));
+  return out;
 }
