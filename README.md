@@ -68,7 +68,7 @@ npm run dev        # 開發伺服器 http://localhost:5173
 
 ## 求解方法
 
-完整的設計文件在 [docs/architecture.md](docs/architecture.md)。程式碼在 `src/solver/`，不依賴 React 和 DOM。
+完整的設計文件在 [docs/architecture.md](docs/architecture.md)。想從程式設計與系統分析的角度學習這個專案，請看[教學文件](docs/tutorial/README.md)（需求分析、架構、演算法、測試、實戰教訓與練習題）。程式碼在 `src/solver/`，不依賴 React 和 DOM。
 
 ### 1. 節點如何建立
 
