@@ -2,7 +2,7 @@
 
 給國中理化課使用的網頁電路模擬器：在格點畫布上接電路，即時看到每個元件的電流、電壓與功率。可以投影上課，也可以讓學生自己動手。
 
-- **線上 Demo**：（部署後補上）
+- **線上 Demo**：<https://hn83320589.github.io/CircuitLab/>
 - 純前端：React 19 + TypeScript（strict）+ Vite，不需要後端
 - 電路求解（MNA 與高斯消去法）全部自行實作，沒有使用電路模擬或線性代數套件
 
@@ -164,7 +164,7 @@ fast-check 失敗時會自動把反例縮小，方便除錯。我也做過「故
 | 最大值                           | 20.0 ms |
 | 求解器本身（Node，100 次中位數） | 0.21 ms |
 
-這些時間大部分是在等瀏覽器的下一幀（60 Hz 約 16.7 ms），遠低於 100 ms 的要求。量測環境：Apple Silicon Mac、Chromium headless。CI 也會跑這個測試，p95 超過 100 ms 就會失敗。
+這些時間大部分是在等瀏覽器的下一幀（60 Hz 約 16.7 ms），遠低於 100 ms 的要求。量測環境：Apple Silicon Mac、Chromium headless。CI 也會跑這個測試，p95 超過 100 ms 就會失敗；在 GitHub Actions 的 ubuntu runner 上，第一次執行的結果是中位數 22.2 ms、p95 38.1 ms。
 
 讓它這麼快的設計：
 
