@@ -6,7 +6,10 @@ import type { Circuit } from '../src/model/types';
 export async function openCircuit(page: Page, circuit: Circuit): Promise<void> {
   const url = await buildShareUrl(circuit, 'http://localhost:4173/');
   await page.goto(url);
-  await page.locator(`[data-element-id="${circuit.elements.at(-1)?.id}"]`).waitFor();
+  // <g> 沒有自己的外框，Playwright 可能判定為不可見，因此只等它出現在 DOM 中
+  await page
+    .locator(`[data-element-id="${circuit.elements.at(-1)?.id}"]`)
+    .waitFor({ state: 'attached' });
 }
 
 /** 格點座標 → 螢幕座標（viewBox 為 -20 -20 1240 840，等比置中） */
