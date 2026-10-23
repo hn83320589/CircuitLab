@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { buildShareUrl } from '../src/io/shareLink';
 import { EXAMPLES } from '../src/teaching/examples';
 import { gridToScreen } from './helpers';
 
@@ -41,4 +42,20 @@ test('預測模式：閉合開關後判斷左邊燈泡變暗', async ({ page }) 
   await page.locator('[data-action=reveal]').click();
   await expect(page.locator('[data-verdict]')).toHaveAttribute('data-verdict', 'correct');
   await expect(page.locator('.verdict')).toContainText('變暗');
+});
+
+test('已開啟 App 的分頁中貼上分享連結，電路會切換並開始新的歷史', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('example-select').selectOption('comparison');
+  await expect(page.locator('[data-kind=ammeter]')).toHaveCount(0);
+
+  // 只有 hash 不同：瀏覽器視為同頁跳轉，不會重新載入頁面
+  const parallel = (EXAMPLES.find((e) => e.id === 'parallel') as (typeof EXAMPLES)[number]).circuit;
+  await page.goto(await buildShareUrl(parallel, 'http://localhost:4173/'));
+
+  await expect(page.locator('[data-kind=ammeter] [data-reading]')).toHaveAttribute(
+    'data-reading',
+    '3.000 A',
+  );
+  await expect(page.getByRole('button', { name: /復原/ })).toBeDisabled();
 });

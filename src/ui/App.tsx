@@ -63,22 +63,32 @@ export function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  // 開啟分享連結：以連結中的電路開始新的歷史
+  // 開啟分享連結：以連結中的電路開始新的歷史。
+  // 在已開啟的分頁貼上新連結只會觸發 hashchange（不會重新載入頁面），所以也要監聽。
   useEffect(() => {
-    const fragment = readShareFragment(window.location.hash);
-    if (!fragment) return;
-    let cancelled = false;
-    void decodeShareFragment(fragment).then((parsed) => {
-      if (cancelled) return;
-      if (parsed.ok) {
-        dispatch({ type: 'reset', circuit: parsed.circuit });
-        setNote(null);
-      } else {
-        setToast({ text: parsed.error, kind: 'error' });
-      }
-    });
+    let disposed = false;
+    let latestRequest = 0;
+    const loadFromHash = () => {
+      const fragment = readShareFragment(window.location.hash);
+      if (!fragment) return;
+      const request = ++latestRequest;
+      void decodeShareFragment(fragment).then((parsed) => {
+        // 元件已卸載，或有更新的連結正在處理
+        if (disposed || request !== latestRequest) return;
+        if (parsed.ok) {
+          dispatch({ type: 'reset', circuit: parsed.circuit });
+          predict({ type: 'stop' });
+          setNote(null);
+        } else {
+          setToast({ text: parsed.error, kind: 'error' });
+        }
+      });
+    };
+    loadFromHash();
+    window.addEventListener('hashchange', loadFromHash);
     return () => {
-      cancelled = true;
+      disposed = true;
+      window.removeEventListener('hashchange', loadFromHash);
     };
   }, []);
 
